@@ -1363,15 +1363,15 @@ const AnalysisView = ({
           { label: "总字数", value: analysis.wordCount.toLocaleString(), sub: "CHARS", color: "text-primary" },
           { 
             label: "重复率", 
-            value: analysis.duplicateRate.replace(' (Turnitin)', ''), 
-            sub: analysis.duplicateRate.includes('Turnitin') ? "Powered by Turnitin" : "评估结果", 
+            value: analysis.duplicateRate, 
+            sub: "评估结果", 
             color: "text-emerald-600", 
             dot: true 
           },
           { 
             label: "AI生成占比", 
-            value: analysis.aiRate.replace(' (GPTZero)', ''), 
-            sub: analysis.aiRate.includes('GPTZero') ? "Powered by GPTZero" : "风险评估", 
+            value: analysis.aiRate, 
+            sub: "风险评估", 
             color: "text-primary" 
           },
           { label: "可读性评分", value: analysis.readability.toString(), sub: "分", color: "text-primary" }
@@ -1989,24 +1989,6 @@ export default function App() {
       const ai = new GoogleGenAI({ apiKey });
       const model = "gemini-3-flash-preview";
 
-      // 1. Call backend for AI detection and plagiarism (proxied)
-      let aiRate = "评估中...";
-      let duplicateRate = "评估中...";
-      try {
-        const detectResponse = await fetch('/api/detect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: text.substring(0, 5000) }),
-        });
-        if (detectResponse.ok) {
-          const detectData = await detectResponse.json();
-          aiRate = detectData.aiRate;
-          duplicateRate = detectData.duplicateRate;
-        }
-      } catch (e) {
-        console.error("Detection API Error:", e);
-      }
-
       const prompt = `你是一个专业的学术论文评审专家。请对以下论文内容进行深度分析，并返回 JSON 格式的结果。
       论文内容：
       ${text.substring(0, 15000)}
@@ -2014,8 +1996,8 @@ export default function App() {
       【重要指令】：
       1. 必须提供详细的 abstractDetails（摘要优缺点及建议）。
       2. 必须提供至少 5 条 polishingSuggestions（润色建议）。
-      3. 如果 aiRate 为 "评估中..."，请根据你的判断估算一个 AI 率。
-      5. 如果 duplicateRate 为 "评估中..."，请根据你的判断估算一个重复率。
+      3. 请根据你的判断估算一个 AI 生成概率（aiRate）。
+      4. 请根据你的判断估算一个重复率（duplicateRate）。
       
       请严格按照以下 JSON 结构返回：
       {
@@ -2124,9 +2106,6 @@ export default function App() {
 
       const analysis = JSON.parse(cleanedText);
       
-      if (aiRate !== "评估中...") analysis.aiRate = aiRate;
-      if (duplicateRate !== "评估中...") analysis.duplicateRate = duplicateRate;
-
       return analysis;
     } catch (error) {
       console.error('Analysis Error:', error);

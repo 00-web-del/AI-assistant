@@ -22,36 +22,9 @@ async function startServer() {
     if (!text) return res.status(400).json({ error: "Text is required" });
 
     try {
-      // 1. Call GPTZero if API key is available
-      let aiRate = "评估中...";
-      if (process.env.GPTZERO_API_KEY) {
-        try {
-          const gptZeroResponse = await fetch("https://api.gptzero.me/v2/predict/text", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": process.env.GPTZERO_API_KEY
-            },
-            body: JSON.stringify({ document: text.substring(0, 5000) })
-          });
-          
-          if (gptZeroResponse.ok) {
-            const gptZeroData = await gptZeroResponse.json();
-            if (gptZeroData && gptZeroData.documents && gptZeroData.documents[0]) {
-              const prob = gptZeroData.documents[0].completely_generated_prob;
-              aiRate = `${(prob * 100).toFixed(1)}% (GPTZero)`;
-            }
-          }
-        } catch (e) {
-          console.error("GPTZero API Error:", e);
-        }
-      }
-
-      // 2. Turnitin Placeholder
-      let duplicateRate = "评估中...";
-      if (process.env.TURNITIN_API_KEY) {
-        duplicateRate = "正在通过 Turnitin 验证...";
-      }
+      // Return default values since GPTZero and Turnitin are disabled
+      const aiRate = "评估中...";
+      const duplicateRate = "评估中...";
 
       res.json({ aiRate, duplicateRate });
     } catch (error) {
