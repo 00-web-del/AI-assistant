@@ -45,7 +45,10 @@ import {
   Star,
   StarBorder,
   OpenInNew,
-  FileDownload
+  FileDownload,
+  Send,
+  SmartToy,
+  AutoFixHigh
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'motion/react';
 import * as pdfjs from 'pdfjs-dist';
@@ -76,6 +79,7 @@ interface ThesisFile {
   date: string;
   status: '待分析' | '分析中' | '已完成' | '失败';
   text?: string;
+  error?: string;
   analysis?: ThesisAnalysis;
 }
 
@@ -100,13 +104,6 @@ interface ThesisAnalysis {
     suggested: string;
     reason: string;
     type: 'grammar' | 'tone' | 'clarity';
-  }[];
-  refCount: number;
-  refNorm: string;
-  referenceDetails?: {
-    citation: string;
-    isCorrect: boolean;
-    issue?: string;
   }[];
   innovation: number;
   logic: number;
@@ -579,9 +576,9 @@ const LoginView = ({ onNavigate }: { onNavigate: (v: View) => void }) => (
           注册
         </button>
       </div>
-      <div className="p-8 space-y-5">
-        <Input label="手机号 / 邮箱" placeholder="请输入您的手机号或邮箱" icon={Person} />
-        <div className="space-y-1">
+        <div className="p-8 space-y-5">
+          <Input label="手机号" placeholder="请输入您的手机号" icon={Person} />
+          <div className="space-y-1">
           <Input label="登录密码" placeholder="请输入密码" icon={Lock} showPasswordToggle />
           <div className="flex justify-end">
             <button className="text-xs font-semibold text-primary hover:underline">忘记密码？</button>
@@ -988,13 +985,15 @@ const DetailModal = ({
   onClose, 
   title, 
   type, 
-  data 
+  data,
+  file
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
   title: string; 
-  type: 'abstract' | 'polishing' | 'references'; 
-  data: any 
+  type: 'abstract' | 'polishing' | 'assistant'; 
+  data: any;
+  file?: ThesisFile | null;
 }) => {
   if (!isOpen) return null;
 
@@ -1024,7 +1023,7 @@ const DetailModal = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-          {!data || (Array.isArray(data) && data.length === 0) ? (
+          {(!data && type !== 'assistant') || (Array.isArray(data) && data.length === 0) ? (
             <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
               <div className="w-16 h-16 bg-surface-container-low rounded-full flex items-center justify-center">
                 <AutoAwesome className="text-outline-variant !text-3xl" />
@@ -1111,35 +1110,163 @@ const DetailModal = ({
                 </div>
               )}
 
-              {type === 'references' && (
-                <div className="space-y-3">
-                  {data.map((ref: any, i: number) => (
-                    <div key={i} className="flex items-start gap-4 p-4 bg-surface-container-low rounded-xl border border-outline-variant/5">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                        ref.isCorrect ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
-                      }`}>
-                        {ref.isCorrect ? <CheckCircle className="!text-sm" /> : <Warning className="!text-sm" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-on-surface leading-snug mb-1">{ref.citation}</p>
-                        {!ref.isCorrect && (
-                          <p className="text-xs text-amber-700 font-bold">
-                            问题：{ref.issue}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              {type === 'assistant' && (
+                <AIChatAssistant file={file} />
               )}
             </>
           )}
         </div>
 
-        <div className="p-6 border-t border-outline-variant/10 bg-surface-container-lowest">
-          <Button className="w-full" onClick={onClose}>返回分析页</Button>
-        </div>
+        {type !== 'assistant' && (
+          <div className="p-6 border-t border-outline-variant/10 bg-surface-container-lowest">
+            <Button className="w-full" onClick={onClose}>返回分析页</Button>
+          </div>
+        )}
       </motion.div>
+    </div>
+  );
+};
+
+const AIChatAssistant = ({ file }: { file?: ThesisFile | null }) => {
+  const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string, model?: string }[]>([
+    { role: 'assistant', content: '你好！我是您的 DeepSeek 学术助手。我可以帮您润色论文、解释专业术语、提供写作建议，或者针对您的论文内容进行深度讨论。请问有什么我可以帮您的？', model: 'DeepSeek-V3' }
+  ]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [activeModel, setActiveModel] = useState('DeepSeek-V3');
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  const models = [
+    { name: 'Gemini 3.0 Pro', desc: '学术逻辑极强', color: 'bg-blue-500' },
+    { name: 'DeepSeek-V3', desc: '中文润色专家', color: 'bg-purple-500' },
+    { name: 'Doubao-Pro', desc: '表达生动自然', color: 'bg-orange-500' }
+  ];
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const handleSend = async () => {
+    if (!input.trim() || isLoading) return;
+
+    const userMessage = input.trim();
+    const currentModel = activeModel;
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setIsLoading(true);
+
+    try {
+      const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+      if (!apiKey) {
+        throw new Error("API Key is not set in environment variables. Please check your AI Studio settings.");
+      }
+      const ai = new GoogleGenAI({ apiKey });
+      const context = file?.text ? `\n\n当前论文内容背景：\n${file.text.substring(0, 2000)}...` : "";
+      
+      // We simulate other models by adjusting the system instruction
+      let modelInstruction = "你是一个顶尖的学术导师和论文润色专家。";
+      if (currentModel.includes('DeepSeek')) modelInstruction += "你特别擅长深度思考和精准的中文学术表达。";
+      if (currentModel.includes('Doubao')) modelInstruction += "你擅长让学术语言更加生动、易读且符合现代学术规范。";
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [
+          { role: 'user', parts: [{ text: `[系统提示：请以 ${currentModel} 的风格和能力进行回答] ${modelInstruction}\n\n基于以下上下文回答用户的问题。${context}\n\n用户问题：${userMessage}` }] }
+        ]
+      });
+
+      const aiResponse = response.text || "抱歉，我暂时无法处理您的请求。";
+      setMessages(prev => [...prev, { role: 'assistant', content: aiResponse, model: currentModel }]);
+    } catch (error) {
+      console.error('AI Assistant Error:', error);
+      let errorMessage = error instanceof Error ? error.message : "Unknown error";
+      
+      // Try to extract a cleaner message if it's a JSON error from Google API
+      try {
+        const parsed = JSON.parse(errorMessage);
+        if (parsed.error && parsed.error.message) {
+          errorMessage = parsed.error.message;
+        }
+      } catch (e) {
+        // Not JSON
+      }
+
+      setMessages(prev => [...prev, { role: 'assistant', content: `抱歉，连接 AI 服务时出现错误：${errorMessage}` }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-[65vh] -m-6">
+      {/* Model Selector Bar */}
+      <div className="px-6 py-3 bg-surface-container-low border-b border-outline-variant/10 flex gap-2 overflow-x-auto no-scrollbar">
+        {models.map((m) => (
+          <button 
+            key={m.name}
+            onClick={() => setActiveModel(m.name)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all flex items-center gap-1.5 border ${
+              activeModel === m.name 
+                ? 'bg-primary text-white border-primary shadow-sm' 
+                : 'bg-white text-on-secondary-container border-outline-variant/20 hover:border-primary/30'
+            }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${activeModel === m.name ? 'bg-white' : m.color}`}></span>
+            {m.name}
+          </button>
+        ))}
+      </div>
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+            {msg.model && (
+              <span className="text-[9px] font-bold text-outline-variant mb-1 ml-1 uppercase tracking-widest">
+                {msg.model}
+              </span>
+            )}
+            <div className={`max-w-[85%] p-4 rounded-2xl text-sm leading-relaxed ${
+              msg.role === 'user' 
+                ? 'bg-primary text-white rounded-tr-none' 
+                : 'bg-surface-container-low text-on-surface rounded-tl-none border border-outline-variant/10 shadow-sm'
+            }`}>
+              <div className="whitespace-pre-wrap">{msg.content}</div>
+            </div>
+          </div>
+        ))}
+        {isLoading && (
+          <div className="flex flex-col items-start">
+            <span className="text-[9px] font-bold text-primary mb-1 ml-1 uppercase tracking-widest animate-pulse">
+              {activeModel} 正在思考...
+            </span>
+            <div className="bg-surface-container-low p-4 rounded-2xl rounded-tl-none border border-outline-variant/10 flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+              <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+              <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="p-4 border-t border-outline-variant/10 bg-surface-container-lowest">
+        <div className="flex gap-2 bg-surface-container-low p-2 rounded-2xl border border-outline-variant/10 focus-within:border-primary transition-colors">
+          <input 
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+            placeholder={`咨询 ${activeModel}...`}
+            className="flex-1 bg-transparent border-0 px-3 py-2 text-sm focus:outline-none"
+          />
+          <button 
+            onClick={handleSend}
+            disabled={isLoading || !input.trim()}
+            className="w-10 h-10 bg-primary text-white rounded-xl flex items-center justify-center disabled:opacity-50 transition-all hover:scale-105 active:scale-95"
+          >
+            <Send className="!text-lg" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -1153,15 +1280,29 @@ const AnalysisView = ({
   file: ThesisFile | null,
   onReanalyze: (file: ThesisFile) => void
 }) => {
-  const [activeDetail, setActiveDetail] = useState<{ type: 'abstract' | 'polishing' | 'references', title: string } | null>(null);
+  const [activeDetail, setActiveDetail] = useState<{ type: 'abstract' | 'polishing' | 'assistant', title: string } | null>(null);
 
-  if (!file || !file.analysis) {
+  if (!file || (!file.analysis && file.status !== '失败')) {
     return (
       <div className="flex flex-col items-center justify-center h-[80vh] text-center p-8">
         <AutoAwesome className="text-primary !text-6xl mb-4 animate-pulse" />
         <h2 className="text-xl font-bold text-primary mb-2">正在准备分析数据...</h2>
         <p className="text-on-secondary-container text-sm">请稍候，AI 正在深度解析您的论文内容</p>
         <Button className="mt-8" onClick={() => onNavigate('upload')}>返回上传</Button>
+      </div>
+    );
+  }
+
+  if (file.status === '失败') {
+    return (
+      <div className="flex flex-col items-center justify-center h-[80vh] text-center p-8">
+        <Warning className="text-error !text-6xl mb-4" />
+        <h2 className="text-xl font-bold text-error mb-2">分析失败</h2>
+        <p className="text-on-secondary-container text-sm max-w-md mx-auto">{file.error || '未知错误，请重试'}</p>
+        <div className="flex gap-4 mt-8">
+          <Button variant="outline" onClick={() => onNavigate('upload')}>返回上传</Button>
+          <Button onClick={() => onReanalyze(file)}>重试分析</Button>
+        </div>
       </div>
     );
   }
@@ -1220,8 +1361,19 @@ const AnalysisView = ({
       <div className="grid grid-cols-2 gap-4">
         {[
           { label: "总字数", value: analysis.wordCount.toLocaleString(), sub: "CHARS", color: "text-primary" },
-          { label: "重复率", value: analysis.duplicateRate, sub: "评估结果", color: "text-emerald-600", dot: true },
-          { label: "AI生成占比", value: analysis.aiRate, sub: "风险评估", color: "text-primary" },
+          { 
+            label: "重复率", 
+            value: analysis.duplicateRate.replace(' (Turnitin)', ''), 
+            sub: analysis.duplicateRate.includes('Turnitin') ? "Powered by Turnitin" : "评估结果", 
+            color: "text-emerald-600", 
+            dot: true 
+          },
+          { 
+            label: "AI生成占比", 
+            value: analysis.aiRate.replace(' (GPTZero)', ''), 
+            sub: analysis.aiRate.includes('GPTZero') ? "Powered by GPTZero" : "风险评估", 
+            color: "text-primary" 
+          },
           { label: "可读性评分", value: analysis.readability.toString(), sub: "分", color: "text-primary" }
         ].map((stat, i) => (
           <div key={i} className="bg-surface-container-lowest p-5 rounded-xl text-center shadow-sm border border-outline-variant/5">
@@ -1290,8 +1442,8 @@ const AnalysisView = ({
 
         <div className="bg-surface-container-lowest rounded-xl p-6 shadow-sm border border-outline-variant/5">
           <div className="flex items-center gap-2 mb-4">
-            <Translate className="text-primary" />
-            <h3 className="font-bold text-on-surface">语言表达</h3>
+            <SmartToy className="text-primary" />
+            <h3 className="font-bold text-on-surface">AI 学术助手</h3>
           </div>
           <div className="flex gap-4 mb-6">
             <div className="flex-1 bg-error-container/20 p-3 rounded-lg border border-error/10">
@@ -1303,37 +1455,21 @@ const AnalysisView = ({
               <p className="text-xl font-extrabold text-primary">{analysis.academicSuggestions}</p>
             </div>
           </div>
-          <button 
-            onClick={() => setActiveDetail({ type: 'polishing', title: '智能润色建议' })}
-            className="w-full py-3.5 bg-transparent border-2 border-primary text-primary rounded-xl font-bold text-sm hover:bg-primary/5 transition-colors"
-          >
-            建议润色
-          </button>
-        </div>
-
-        <div className="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm border border-outline-variant/5">
-          <div className="p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <FormatQuote className="text-primary" />
-              <h3 className="font-bold text-on-surface">参考文献</h3>
-            </div>
-            <div className="flex justify-between items-center bg-surface-container-low p-4 rounded-lg">
-              <div>
-                <p className="text-xs text-on-secondary-container font-bold mb-1">引用总数</p>
-                <p className="text-lg font-bold text-on-surface">{analysis.refCount} 篇</p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs text-on-secondary-container font-bold mb-1">规范性</p>
-                <p className="text-lg font-bold text-primary">{analysis.refNorm}</p>
-              </div>
-            </div>
+          <div className="flex gap-3">
+            <button 
+              onClick={() => setActiveDetail({ type: 'polishing', title: '深度润色建议' })}
+              className="flex-1 py-3.5 bg-surface-container-high text-on-surface rounded-xl font-bold text-sm hover:bg-surface-container-highest transition-all border border-outline-variant/10 flex items-center justify-center gap-2"
+            >
+              <AutoFixHigh className="!text-lg text-primary" /> 开启 AI 深度润色
+            </button>
+            <button 
+              onClick={() => setActiveDetail({ type: 'assistant', title: 'AI 学术助手' })}
+              className="w-12 h-12 bg-primary text-white rounded-full flex items-center justify-center shadow-lg hover:scale-110 transition-transform shrink-0"
+              title="咨询 AI 助手"
+            >
+              <SmartToy className="!text-xl" />
+            </button>
           </div>
-          <button 
-            onClick={() => setActiveDetail({ type: 'references', title: '参考文献规范检查' })}
-            className="w-full py-3 text-sm font-bold text-primary bg-surface-container-low/50 hover:bg-surface-container-low transition-colors border-t border-outline-variant/10"
-          >
-            查看详情
-          </button>
         </div>
 
         <Button className="w-full" onClick={() => onNavigate('report')}>
@@ -1348,10 +1484,11 @@ const AnalysisView = ({
             onClose={() => setActiveDetail(null)}
             title={activeDetail.title}
             type={activeDetail.type}
+            file={file}
             data={
               activeDetail.type === 'abstract' ? analysis.abstractDetails :
               activeDetail.type === 'polishing' ? analysis.polishingSuggestions :
-              analysis.referenceDetails
+              null
             }
           />
         )}
@@ -1843,130 +1980,174 @@ export default function App() {
   };
 
   const analyzeThesis = async (text: string): Promise<ThesisAnalysis> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const model = "gemini-3-flash-preview";
-    
-    const prompt = `你是一个专业的学术论文评审专家。请对以下论文内容进行深度分析，并返回 JSON 格式的结果。
-    论文内容：
-    ${text.substring(0, 15000)}
-    
-    【重要指令】：
-    1. 必须提供详细的 abstractDetails（摘要优缺点及建议）。
-    2. 必须提供至少 5 条 polishingSuggestions（润色建议），涵盖语法、语气和清晰度。即使论文写得很好，也要提出更高级的学术表达建议。
-    3. 必须提供至少 5 条 referenceDetails（参考文献检查），指出其引用格式是否规范。
-    
-    请严格按照以下 JSON 结构返回：
-    {
-      "wordCount": 数字,
-      "duplicateRate": "百分比字符串",
-      "aiRate": "百分比字符串",
-      "readability": 0-100数字,
-      "abstractEval": "摘要评价字符串",
-      "abstractScore": 0-100数字,
-      "abstractDetails": {
-        "strengths": ["优点1", "优点2", "优点3"],
-        "weaknesses": ["缺点1", "缺点2", "缺点3"],
-        "suggestions": ["建议1", "建议2", "建议3"]
-      },
-      "structureEval": [{"name": "章节名", "status": "ok" | "warning", "detail": "说明"}],
-      "structureScore": 0-100数字,
-      "grammarErrors": 数字,
-      "academicSuggestions": 数字,
-      "polishingSuggestions": [
-        {"original": "原文句子", "suggested": "润色后句子", "reason": "修改理由", "type": "grammar" | "tone" | "clarity"}
-      ],
-      "refCount": 数字,
-      "refNorm": "百分比字符串",
-      "referenceDetails": [
-        {"citation": "引用文献文本", "isCorrect": true/false, "issue": "如果不规范，说明原因"}
-      ],
-      "innovation": 0-100数字,
-      "logic": 0-100数字,
-      "norm": 0-100数字,
-      "expression": 0-100数字
-    }`;
-
-    const response = await ai.models.generateContent({
-      model,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            wordCount: { type: Type.INTEGER },
-            duplicateRate: { type: Type.STRING },
-            aiRate: { type: Type.STRING },
-            readability: { type: Type.INTEGER },
-            abstractEval: { type: Type.STRING },
-            abstractScore: { type: Type.INTEGER },
-            abstractDetails: {
-              type: Type.OBJECT,
-              properties: {
-                strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
-                weaknesses: { type: Type.ARRAY, items: { type: Type.STRING } },
-                suggestions: { type: Type.ARRAY, items: { type: Type.STRING } }
-              },
-              required: ['strengths', 'weaknesses', 'suggestions']
-            },
-            structureEval: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  name: { type: Type.STRING },
-                  status: { type: Type.STRING },
-                  detail: { type: Type.STRING }
-                },
-                required: ['name', 'status']
-              }
-            },
-            structureScore: { type: Type.INTEGER },
-            grammarErrors: { type: Type.INTEGER },
-            academicSuggestions: { type: Type.INTEGER },
-            polishingSuggestions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  original: { type: Type.STRING },
-                  suggested: { type: Type.STRING },
-                  reason: { type: Type.STRING },
-                  type: { type: Type.STRING }
-                },
-                required: ['original', 'suggested', 'reason', 'type']
-              }
-            },
-            refCount: { type: Type.INTEGER },
-            refNorm: { type: Type.STRING },
-            referenceDetails: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  citation: { type: Type.STRING },
-                  isCorrect: { type: Type.BOOLEAN },
-                  issue: { type: Type.STRING }
-                },
-                required: ['citation', 'isCorrect']
-              }
-            },
-            innovation: { type: Type.INTEGER },
-            logic: { type: Type.INTEGER },
-            norm: { type: Type.INTEGER },
-            expression: { type: Type.INTEGER }
-          },
-          required: [
-            'wordCount', 'duplicateRate', 'aiRate', 'readability', 
-            'abstractEval', 'abstractScore', 'abstractDetails', 'structureEval', 'structureScore',
-            'grammarErrors', 'academicSuggestions', 'polishingSuggestions', 'refCount', 'refNorm', 'referenceDetails',
-            'innovation', 'logic', 'norm', 'expression'
-          ]
-        }
+    try {
+      const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+      if (!apiKey) {
+        throw new Error("API Key is not set in environment variables. Please check your AI Studio settings.");
       }
-    });
 
-    return JSON.parse(response.text);
+      const ai = new GoogleGenAI({ apiKey });
+      const model = "gemini-3-flash-preview";
+
+      // 1. Call backend for AI detection and plagiarism (proxied)
+      let aiRate = "评估中...";
+      let duplicateRate = "评估中...";
+      try {
+        const detectResponse = await fetch('/api/detect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text.substring(0, 5000) }),
+        });
+        if (detectResponse.ok) {
+          const detectData = await detectResponse.json();
+          aiRate = detectData.aiRate;
+          duplicateRate = detectData.duplicateRate;
+        }
+      } catch (e) {
+        console.error("Detection API Error:", e);
+      }
+
+      const prompt = `你是一个专业的学术论文评审专家。请对以下论文内容进行深度分析，并返回 JSON 格式的结果。
+      论文内容：
+      ${text.substring(0, 15000)}
+      
+      【重要指令】：
+      1. 必须提供详细的 abstractDetails（摘要优缺点及建议）。
+      2. 必须提供至少 5 条 polishingSuggestions（润色建议）。
+      3. 如果 aiRate 为 "评估中..."，请根据你的判断估算一个 AI 率。
+      5. 如果 duplicateRate 为 "评估中..."，请根据你的判断估算一个重复率。
+      
+      请严格按照以下 JSON 结构返回：
+      {
+        "wordCount": 数字,
+        "duplicateRate": "百分比字符串",
+        "aiRate": "百分比字符串",
+        "readability": 0-100数字,
+        "abstractEval": "摘要评价字符串",
+        "abstractScore": 0-100数字,
+        "abstractDetails": {
+          "strengths": ["优点1", "优点2", "优点3"],
+          "weaknesses": ["缺点1", "缺点2", "缺点3"],
+          "suggestions": ["建议1", "建议2", "建议3"]
+        },
+        "structureEval": [{"name": "章节名", "status": "ok" | "warning", "detail": "说明"}],
+        "structureScore": 0-100数字,
+        "grammarErrors": 数字,
+        "academicSuggestions": 数字,
+        "polishingSuggestions": [
+          {"original": "原文句子", "suggested": "润色后句子", "reason": "修改理由", "type": "grammar" | "tone" | "clarity"}
+        ],
+        "innovation": 0-100数字,
+        "logic": 0-100数字,
+        "norm": 0-100数字,
+        "expression": 0-100数字
+      }`;
+
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              wordCount: { type: Type.INTEGER },
+              duplicateRate: { type: Type.STRING },
+              aiRate: { type: Type.STRING },
+              readability: { type: Type.INTEGER },
+              abstractEval: { type: Type.STRING },
+              abstractScore: { type: Type.INTEGER },
+              abstractDetails: {
+                type: Type.OBJECT,
+                properties: {
+                  strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  weaknesses: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  suggestions: { type: Type.ARRAY, items: { type: Type.STRING } }
+                },
+                required: ["strengths", "weaknesses", "suggestions"]
+              },
+              structureEval: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    status: { type: Type.STRING },
+                    detail: { type: Type.STRING }
+                  },
+                  required: ["name", "status"]
+                }
+              },
+              structureScore: { type: Type.INTEGER },
+              grammarErrors: { type: Type.INTEGER },
+              academicSuggestions: { type: Type.INTEGER },
+              polishingSuggestions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    original: { type: Type.STRING },
+                    suggested: { type: Type.STRING },
+                    reason: { type: Type.STRING },
+                    type: { type: Type.STRING }
+                  },
+                  required: ["original", "suggested", "reason", "type"]
+                }
+              },
+              innovation: { type: Type.INTEGER },
+              logic: { type: Type.INTEGER },
+              norm: { type: Type.INTEGER },
+              expression: { type: Type.INTEGER }
+            },
+            required: [
+              "wordCount", "duplicateRate", "aiRate", "readability", 
+              "abstractEval", "abstractScore", "abstractDetails", 
+              "structureEval", "structureScore", "grammarErrors", 
+              "academicSuggestions", "polishingSuggestions", 
+              "innovation", "logic", "norm", "expression"
+            ]
+          }
+        }
+      });
+
+      if (!response.text) {
+        throw new Error("Empty response from AI model");
+      }
+
+      // Clean response text
+      let cleanedText = response.text.trim();
+      if (cleanedText.startsWith("```json")) {
+        cleanedText = cleanedText.replace(/^```json\n?/, "").replace(/\n?```$/, "");
+      } else if (cleanedText.startsWith("```")) {
+        cleanedText = cleanedText.replace(/^```\n?/, "").replace(/\n?```$/, "");
+      }
+
+      const analysis = JSON.parse(cleanedText);
+      
+      if (aiRate !== "评估中...") analysis.aiRate = aiRate;
+      if (duplicateRate !== "评估中...") analysis.duplicateRate = duplicateRate;
+
+      return analysis;
+    } catch (error) {
+      console.error('Analysis Error:', error);
+      let message = error instanceof Error ? error.message : 'Failed to analyze thesis';
+      
+      // Try to extract a cleaner message if it's a JSON error from Google API
+      try {
+        const parsed = JSON.parse(message);
+        if (parsed.error && parsed.error.message) {
+          message = parsed.error.message;
+        }
+      } catch (e) {
+        // Not JSON
+      }
+      
+      if (message.includes("API key not valid")) {
+        message = "API 密钥无效。请在 AI Studio 的“设置”菜单中配置正确的 GEMINI_API_KEY。如果您使用的是免费模型，请确保您的项目已正确关联。";
+      }
+      
+      throw new Error(message);
+    }
   };
 
   const handleFileUpload = async (file: File) => {
@@ -1986,14 +2167,18 @@ export default function App() {
 
     try {
       const text = await extractText(file);
+      if (!text || text.trim().length < 50) {
+        throw new Error("未能从文件中提取到足够的文本内容。请确保文件不是加密的，且包含可识别的文字内容。");
+      }
       const analysis = await analyzeThesis(text);
       
-      setFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, status: '已完成', analysis, text } : f));
-      setCurrentFile({ ...newFile, status: '已完成', analysis, text });
+      setFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, status: '已完成', analysis, text, error: undefined } : f));
+      setCurrentFile({ ...newFile, status: '已完成', analysis, text, error: undefined });
     } catch (error) {
       console.error('Analysis failed:', error);
-      setFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, status: '失败' } : f));
-      setCurrentFile(prev => prev?.id === newFile.id ? { ...prev, status: '失败' } : prev);
+      const message = error instanceof Error ? error.message : "Unknown error";
+      setFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, status: '失败', error: message } : f));
+      setCurrentFile(prev => prev?.id === newFile.id ? { ...prev, status: '失败', error: message } : prev);
     } finally {
       setIsAnalyzing(false);
     }
