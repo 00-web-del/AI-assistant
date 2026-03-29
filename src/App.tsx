@@ -1160,7 +1160,7 @@ const AIChatAssistant = ({ file }: { file?: ThesisFile | null }) => {
     try {
       const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
       if (!apiKey) {
-        throw new Error("API Key is not set in environment variables. Please check your AI Studio settings.");
+        throw new Error("未检测到 API 密钥。如果您已部署到 Vercel，请在 Vercel 控制面板的 Settings -> Environment Variables 中添加 GEMINI_API_KEY。");
       }
       const ai = new GoogleGenAI({ apiKey });
       const context = file?.text ? `\n\n当前论文内容背景：\n${file.text.substring(0, 2000)}...` : "";
@@ -1983,7 +1983,7 @@ export default function App() {
     try {
       const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
       if (!apiKey) {
-        throw new Error("API Key is not set in environment variables. Please check your AI Studio settings.");
+        throw new Error("未检测到 API 密钥。如果您已部署到 Vercel，请在 Vercel 控制面板的 Settings -> Environment Variables 中添加 GEMINI_API_KEY。");
       }
 
       const ai = new GoogleGenAI({ apiKey });
