@@ -1524,7 +1524,7 @@ const ReportView = ({ onNavigate, file }: { onNavigate: (v: View) => void, file:
       }
       const ai = new GoogleGenAI({ apiKey });
       
-      const prompt = `你是一个资深的学术论文评审专家。请使用 Gemini 3.1 Pro 模型，对以下论文内容进行全面、细致的深度分析，并生成一份可以直接用于下载的专业分析报告。
+      const prompt = `你是一个资深的学术论文评审专家。请使用 Gemini 3 Flash 模型，对以下论文内容进行全面、细致的深度分析，并生成一份可以直接用于下载的专业分析报告。
 
 要求：
 1. 报告必须全面且细致，包含：
@@ -1541,7 +1541,7 @@ const ReportView = ({ onNavigate, file }: { onNavigate: (v: View) => void, file:
 ${file.text.substring(0, 20000)}`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3-flash-preview",
         contents: prompt,
       });
 
@@ -1726,7 +1726,7 @@ ${file.text.substring(0, 20000)}`;
             {isGenerating ? (
               <>
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                正在使用 Gemini 3.1 Pro 生成深度报告...
+                正在使用 Gemini 3 Flash 生成深度报告...
               </>
             ) : (
               <>
@@ -1736,7 +1736,7 @@ ${file.text.substring(0, 20000)}`;
             )}
           </button>
           <p className="text-center text-[10px] text-outline-variant mt-3">
-            由 Gemini 3.1 Pro 提供全面细致的深度分析，支持无乱码 PDF 及 Word 导出
+            由 Gemini 3 Flash 提供全面细致的深度分析，支持无乱码 PDF 及 Word 导出
           </p>
         </div>
       </div>
