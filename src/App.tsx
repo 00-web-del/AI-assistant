@@ -54,6 +54,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import * as pdfjs from 'pdfjs-dist';
 import mammoth from 'mammoth';
 import { GoogleGenAI, Type } from "@google/genai";
+import { jsPDF } from 'jspdf';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from 'docx';
+import { saveAs } from 'file-saver';
+import ReactMarkdown from 'react-markdown';
+import { toPng } from 'html-to-image';
 import { WeChatIcon, GoogleIcon } from './constants';
 
 // Initialize PDF.js worker
@@ -880,7 +885,7 @@ const UploadView = ({
     >
       <header className="flex justify-between items-center h-16 sticky top-0 z-50 bg-background/80 backdrop-blur-md">
         <div className="w-8 h-8 rounded-full overflow-hidden bg-surface-container-high">
-          <img src="https://picsum.photos/seed/user/32/32" alt="Avatar" referrerPolicy="no-referrer" />
+          <img src="https://api.dicebear.com/7.x/bottts/svg?seed=Felix" alt="Avatar" referrerPolicy="no-referrer" />
         </div>
         <h1 className="text-xl font-bold text-primary tracking-tight">上传论文</h1>
         <button className="p-2 text-on-secondary-container">
@@ -1498,8 +1503,122 @@ const AnalysisView = ({
 };
 
 const ReportView = ({ onNavigate, file }: { onNavigate: (v: View) => void, file: ThesisFile | null }) => {
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [detailedReport, setDetailedReport] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const reportRef = React.useRef<HTMLDivElement>(null);
+
   if (!file || !file.analysis) return null;
   const { analysis } = file;
+
+  const generateDetailedReport = async () => {
+    if (!file.text) {
+      alert("无法获取论文文本，请重新上传分析。");
+      return;
+    }
+    setIsGenerating(true);
+    try {
+      const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+      if (!apiKey) {
+        throw new Error("未检测到 API 密钥。");
+      }
+      const ai = new GoogleGenAI({ apiKey });
+      
+      const prompt = `你是一个资深的学术论文评审专家。请使用 Gemini 3.1 Pro 模型，对以下论文内容进行全面、细致的深度分析，并生成一份可以直接用于下载的专业分析报告。
+
+要求：
+1. 报告必须全面且细致，包含：
+   - 论文整体评价（优缺点总结）
+   - 摘要深度分析（结构、逻辑、吸引力）
+   - 章节结构与逻辑连贯性分析
+   - 语言表达与学术规范性审查
+   - 创新性与学术价值评估
+   - 具体的修改建议（至少5条，需指出具体问题和修改方向）
+2. 使用 Markdown 格式输出，排版清晰美观，使用多级标题、列表等。
+3. 语言必须是中文，严谨专业。
+
+论文内容：
+${file.text.substring(0, 20000)}`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-pro-preview",
+        contents: prompt,
+      });
+
+      setDetailedReport(response.text);
+      setShowPreview(true);
+    } catch (error) {
+      console.error("生成深度报告失败:", error);
+      alert("生成深度报告失败，请稍后重试。");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const downloadPDF = async () => {
+    if (!reportRef.current) return;
+    try {
+      // Use html-to-image to avoid Chinese font garbling and oklch color issues
+      const imgData = await toPng(reportRef.current, { pixelRatio: 2, backgroundColor: '#ffffff' });
+      const width = reportRef.current.offsetWidth;
+      const height = reportRef.current.offsetHeight;
+      
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (height * pdfWidth) / width;
+      
+      let heightLeft = pdfHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+      heightLeft -= pdf.internal.pageSize.getHeight();
+
+      while (heightLeft >= 0) {
+        position = heightLeft - pdfHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+        heightLeft -= pdf.internal.pageSize.getHeight();
+      }
+
+      pdf.save(`${file.name}-深度分析报告.pdf`);
+    } catch (error) {
+      console.error("PDF 导出失败:", error);
+      alert("PDF 导出失败");
+    }
+  };
+
+  const downloadWord = async () => {
+    if (!detailedReport) return;
+    try {
+      // Simple Markdown to Word conversion
+      const paragraphs = detailedReport.split('\n\n').map(text => {
+        if (text.startsWith('# ')) {
+          return new Paragraph({ text: text.replace('# ', ''), heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER });
+        } else if (text.startsWith('## ')) {
+          return new Paragraph({ text: text.replace('## ', ''), heading: HeadingLevel.HEADING_2 });
+        } else if (text.startsWith('### ')) {
+          return new Paragraph({ text: text.replace('### ', ''), heading: HeadingLevel.HEADING_3 });
+        } else if (text.startsWith('- ') || text.startsWith('* ')) {
+          return new Paragraph({ text: text.replace(/^[-*]\s/, ''), bullet: { level: 0 } });
+        } else {
+          return new Paragraph({ text });
+        }
+      });
+
+      const doc = new Document({
+        sections: [{
+          properties: {},
+          children: paragraphs
+        }]
+      });
+
+      const blob = await Packer.toBlob(doc);
+      saveAs(blob, `${file.name}-深度分析报告.docx`);
+    } catch (error) {
+      console.error("Word 导出失败:", error);
+      alert("Word 导出失败");
+    }
+  };
 
   return (
     <motion.div 
@@ -1596,7 +1715,83 @@ const ReportView = ({ onNavigate, file }: { onNavigate: (v: View) => void, file:
             </div>
           </div>
         </div>
+
+        {/* Download Section */}
+        <div className="pt-6 border-t border-outline-variant/10">
+          <button 
+            onClick={generateDetailedReport}
+            disabled={isGenerating}
+            className="w-full py-4 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2 shadow-md disabled:opacity-70"
+          >
+            {isGenerating ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                正在使用 Gemini 3.1 Pro 生成深度报告...
+              </>
+            ) : (
+              <>
+                <AutoAwesome className="!text-lg" />
+                生成并下载深度分析报告 (PDF/Word)
+              </>
+            )}
+          </button>
+          <p className="text-center text-[10px] text-outline-variant mt-3">
+            由 Gemini 3.1 Pro 提供全面细致的深度分析，支持无乱码 PDF 及 Word 导出
+          </p>
+        </div>
       </div>
+
+      {/* Detailed Report Preview Modal */}
+      <AnimatePresence>
+        {showPreview && detailedReport && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-surface-container-lowest w-full max-w-2xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+            >
+              <div className="flex justify-between items-center p-4 border-b border-outline-variant/10 bg-surface-container-lowest z-10">
+                <h3 className="font-bold text-primary flex items-center gap-2">
+                  <Assessment className="!text-xl" />
+                  深度分析报告预览
+                </h3>
+                <button onClick={() => setShowPreview(false)} className="p-1 text-outline-variant hover:text-on-surface rounded-full hover:bg-surface-container-low transition-colors">
+                  <Close />
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-6 bg-white">
+                <div ref={reportRef} className="prose prose-sm max-w-none prose-headings:text-primary prose-a:text-primary markdown-body bg-white p-4">
+                  <ReactMarkdown>{detailedReport}</ReactMarkdown>
+                </div>
+              </div>
+              
+              <div className="p-4 border-t border-outline-variant/10 bg-surface-container-lowest flex gap-3">
+                <button 
+                  onClick={downloadPDF}
+                  className="flex-1 py-3 bg-error-container text-error hover:bg-error/20 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2"
+                >
+                  <PictureAsPdf className="!text-lg" />
+                  下载 PDF
+                </button>
+                <button 
+                  onClick={downloadWord}
+                  className="flex-1 py-3 bg-primary/10 text-primary hover:bg-primary/20 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2"
+                >
+                  <Description className="!text-lg" />
+                  下载 Word
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 };
