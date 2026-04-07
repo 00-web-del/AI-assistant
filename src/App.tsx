@@ -1998,11 +1998,13 @@ const StarredView = ({
 const ProfileView = ({ 
   onNavigate, 
   files, 
-  profile 
+  profile,
+  onLogout
 }: { 
   onNavigate: (v: View) => void, 
   files: ThesisFile[],
-  profile: UserProfile | null
+  profile: UserProfile | null,
+  onLogout: () => void
 }) => {
   const stats = {
     uploads: files.length,
@@ -2113,7 +2115,7 @@ const ProfileView = ({
     </div>
 
     <div className="py-8">
-      <Button variant="error" className="w-full" onClick={() => onNavigate('login')}>
+      <Button variant="error" className="w-full" onClick={onLogout}>
         退出登录
       </Button>
     </div>
@@ -2428,6 +2430,17 @@ export default function App() {
     });
   };
 
+  const handleLogout = () => {
+    setUserProfile(null);
+    setFiles([]);
+    setCurrentFile(null);
+    setLibraryItems(MOCK_LIBRARY);
+    localStorage.removeItem('user_profile');
+    localStorage.removeItem('thesis_files');
+    localStorage.removeItem('library_items');
+    setView('login');
+  };
+
   const renderView = () => {
     switch (view) {
       case 'login': return <LoginView onNavigate={setView} />;
@@ -2464,6 +2477,7 @@ export default function App() {
           onNavigate={setView} 
           files={files} 
           profile={userProfile}
+          onLogout={handleLogout}
         />
       );
       case 'library': return (
